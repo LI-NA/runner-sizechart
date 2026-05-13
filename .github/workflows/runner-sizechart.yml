@@ -1,0 +1,126 @@
+name: Runner Size Chart
+
+on:
+  workflow_dispatch:
+    inputs:
+      cleanup_linux:
+        description: Run jlumbroso/free-disk-space on the Ubuntu comparison job
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-latest
+            runner: ubuntu-latest
+            cleanup: none
+          - label: ubuntu-latest-free-disk-space
+            runner: ubuntu-latest
+            cleanup: free-disk-space
+          - label: ubuntu-24.04-arm
+            runner: ubuntu-24.04-arm
+            cleanup: none
+          - label: windows-latest
+            runner: windows-latest
+            cleanup: none
+          - label: windows-2022
+            runner: windows-2022
+            cleanup: none
+          - label: macos-latest
+            runner: macos-latest
+            cleanup: none
+          - label: macos-15-intel
+            runner: macos-15-intel
+            cleanup: none
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Collect baseline snapshot
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force reports | Out-Null
+          $python = (Get-Command python -ErrorAction SilentlyContinue).Source
+          if (-not $python) {
+            $python = (Get-Command python3 -ErrorAction Stop).Source
+          }
+          & $python scripts/collect.py `
+            --label "${{ matrix.label }}" `
+            --runner "${{ matrix.runner }}" `
+            --phase "before" `
+            --output "reports/${{ matrix.label }}-before.json"
+
+      - name: Free disk space on Ubuntu
+        if: ${{ inputs.cleanup_linux && matrix.cleanup == 'free-disk-space' }}
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Collect post-cleanup snapshot
+        if: ${{ inputs.cleanup_linux && matrix.cleanup == 'free-disk-space' }}
+        shell: pwsh
+        run: |
+          $python = (Get-Command python -ErrorAction SilentlyContinue).Source
+          if (-not $python) {
+            $python = (Get-Command python3 -ErrorAction Stop).Source
+          }
+          & $python scripts/collect.py `
+            --label "${{ matrix.label }}" `
+            --runner "${{ matrix.runner }}" `
+            --phase "after-free-disk-space" `
+            --note "After jlumbroso/free-disk-space@main" `
+            --output "reports/${{ matrix.label }}-after-free-disk-space.json"
+
+      - name: Upload probe snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-sizechart-${{ matrix.label }}
+          path: reports/*.json
+          retention-days: 14
+
+  summarize:
+    name: Summarize report
+    if: ${{ always() }}
+    needs: probe
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download probe snapshots
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/input
+
+      - name: Build Markdown report
+        run: |
+          python3 scripts/summarize.py \
+            --input reports/input \
+            --output reports/runner-sizechart.md \
+            --json-output reports/runner-sizechart.json
+
+      - name: Upload combined report
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-sizechart-report
+          path: |
+            reports/runner-sizechart.md
+            reports/runner-sizechart.json
+          retention-days: 30
