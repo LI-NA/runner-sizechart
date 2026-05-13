@@ -74,17 +74,13 @@ jobs:
 
       - name: Collect post-cleanup snapshot
         if: ${{ inputs.cleanup_linux && matrix.cleanup == 'free-disk-space' }}
-        shell: pwsh
+        shell: bash
         run: |
-          $python = (Get-Command python -ErrorAction SilentlyContinue).Source
-          if (-not $python) {
-            $python = (Get-Command python3 -ErrorAction Stop).Source
-          }
-          & $python scripts/collect.py `
-            --label "${{ matrix.label }}" `
-            --runner "${{ matrix.runner }}" `
-            --phase "after-free-disk-space" `
-            --note "After jlumbroso/free-disk-space@main" `
+          python3 scripts/collect.py \
+            --label "${{ matrix.label }}" \
+            --runner "${{ matrix.runner }}" \
+            --phase "after-free-disk-space" \
+            --note "After jlumbroso/free-disk-space@main" \
             --output "reports/${{ matrix.label }}-after-free-disk-space.json"
 
       - name: Upload probe snapshot
