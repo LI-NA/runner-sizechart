@@ -284,6 +284,114 @@ def cleanup_candidates() -> list[dict[str, Any]]:
     return candidates
 
 
+def drive_for(value: str | None) -> str | None:
+    if not value:
+        return None
+    drive, _ = os.path.splitdrive(value)
+    return drive or None
+
+
+def cargo_problem_suffix() -> Path:
+    return Path(
+        "git",
+        "checkouts",
+        "python-environment-tools-5b48281f23f65a72",
+        "9e61a22",
+        "crates",
+        "pet-conda",
+        "tests",
+        "unix",
+        "conda_env_without_manager_but_found_in_history",
+        "some_other_location",
+        "conda_install",
+        "conda-meta",
+        "python-fastjsonschema-2.16.2-py310hca03da5_0.json",
+    )
+
+
+def cargo_home_candidate_paths() -> list[tuple[str, Path]]:
+    if platform.system() != "Windows":
+        return []
+
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    runner_temp = os.environ.get("RUNNER_TEMP")
+    userprofile = os.environ.get("USERPROFILE")
+    workspace_drive = drive_for(workspace)
+    temp_drive = drive_for(runner_temp)
+
+    raw: list[tuple[str, Path]] = []
+    if workspace_drive:
+        raw.append(("workspace_drive_root_short", Path(f"{workspace_drive}\\c")))
+    if temp_drive:
+        raw.append(("runner_temp_drive_root_short", Path(f"{temp_drive}\\c")))
+    if runner_temp:
+        raw.append(("runner_temp_cargo", Path(runner_temp) / "cargo"))
+    if workspace:
+        raw.append(("workspace_cargo_home", Path(workspace) / ".cargo-home"))
+    if userprofile:
+        raw.append(("userprofile_default", Path(userprofile) / ".cargo"))
+
+    seen: set[str] = set()
+    candidates: list[tuple[str, Path]] = []
+    for label, path in raw:
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append((label, path))
+    return candidates
+
+
+def cargo_home_candidates() -> list[dict[str, Any]]:
+    suffix = cargo_problem_suffix()
+    results: list[dict[str, Any]] = []
+
+    for label, path in cargo_home_candidate_paths():
+        existed_before = path.exists()
+        error = None
+        writable = False
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            test_file = path / ".runner-sizechart-write-test"
+            test_file.write_text("ok", encoding="utf-8")
+            if test_file.read_text(encoding="utf-8") == "ok":
+                writable = True
+            test_file.unlink(missing_ok=True)
+        except OSError as exc:
+            error = str(exc)
+
+        estimated = str(path / suffix)
+        estimated_length = len(estimated)
+        results.append(
+            {
+                "label": label,
+                "path": str(path),
+                "path_length": len(str(path)),
+                "exists_before": existed_before,
+                "exists_after": path.exists(),
+                "writable": writable,
+                "estimated_problem_path_length": estimated_length,
+                "headroom_to_260": 260 - estimated_length,
+                "error": error,
+                "recommended": False,
+            }
+        )
+
+    selected = next(
+        (item for item in results if item["writable"] and item["estimated_problem_path_length"] < 240),
+        None,
+    )
+    if selected is None:
+        selected = next(
+            (item for item in results if item["writable"] and item["estimated_problem_path_length"] < 260),
+            None,
+        )
+    if selected is not None:
+        selected["recommended"] = True
+
+    return results
+
+
 def raw_commands() -> dict[str, str | None]:
     system = platform.system()
     values: dict[str, str | None] = {}
@@ -295,6 +403,16 @@ def raw_commands() -> dict[str, str | None]:
         values["sysctl_hw"] = run(["sysctl", "hw.ncpu", "hw.memsize", "machdep.cpu.brand_string"])
         values["df_h"] = run(["df", "-h"])
     elif system == "Windows":
+        values["git_version"] = run(["git", "--version"])
+        values["git_core_longpaths_global"] = run(["git", "config", "--global", "--get", "core.longpaths"])
+        values["long_paths_enabled"] = run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem' -Name LongPathsEnabled -ErrorAction SilentlyContinue).LongPathsEnabled",
+            ]
+        )
         values["computer_info"] = run(
             [
                 "powershell",
@@ -365,6 +483,7 @@ def snapshot(args: argparse.Namespace) -> dict[str, Any]:
         },
         "disks": disks,
         "cleanup_candidates": cleanup_candidates(),
+        "cargo_home_candidates": cargo_home_candidates(),
         "raw": raw_commands(),
     }
 

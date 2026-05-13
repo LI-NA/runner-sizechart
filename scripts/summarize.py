@@ -140,12 +140,43 @@ def cleanup_candidates_table(snapshots: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def cargo_home_candidates_table(snapshots: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "## Windows Cargo Home Candidates",
+        "",
+        "| Label | Candidate | Path | Writable | Est. Failing Path | Headroom | Notes |",
+        "|---|---|---|---:|---:|---:|---|",
+    ]
+    rows: list[str] = []
+    for snap in snapshots:
+        for item in snap.get("cargo_home_candidates", []):
+            notes = []
+            if item.get("recommended"):
+                notes.append("recommended")
+            if item.get("error"):
+                notes.append(short(item.get("error"), 48))
+            rows.append(
+                "| {label} | {candidate} | `{path}` | {writable} | {estimated} | {headroom} | {notes} |".format(
+                    label=snap.get("label", ""),
+                    candidate=item.get("label", ""),
+                    path=item.get("path", ""),
+                    writable=item.get("writable"),
+                    estimated=item.get("estimated_problem_path_length", "n/a"),
+                    headroom=item.get("headroom_to_260", "n/a"),
+                    notes=", ".join(notes),
+                )
+            )
+    lines.extend(rows or ["| n/a | n/a | n/a | n/a | n/a | n/a | n/a |"])
+    return lines
+
+
 def raw_artifacts_note() -> list[str]:
     return [
         "## Notes",
         "",
         "- `Workspace Free` is measured on the filesystem that contains `GITHUB_WORKSPACE`.",
         "- Cleanup candidate sizes are best-effort. Windows scans are time-limited and may be partial.",
+        "- `Est. Failing Path` estimates the Windows path length for the Cargo git dependency path that failed in the Zed build.",
         "- The Linux cleanup row uses `jlumbroso/free-disk-space@main` with Android, .NET, Haskell, large packages, Docker images, and swap cleanup enabled; tool-cache cleanup is left off.",
         "- Raw JSON snapshots are included in the `runner-sizechart-report` artifact for deeper inspection.",
     ]
@@ -159,7 +190,7 @@ def build_report(snapshots: list[dict[str, Any]]) -> str:
         f"Snapshots: {len(snapshots)}",
         "",
     ]
-    for section in (specs_table, cleanup_delta_table, cleanup_candidates_table):
+    for section in (specs_table, cleanup_delta_table, cleanup_candidates_table, cargo_home_candidates_table):
         lines.extend(section(snapshots))
         lines.append("")
     lines.extend(raw_artifacts_note())
